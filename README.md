@@ -57,6 +57,12 @@ python3 x_fetch.py user elonmusk --limit 10
 
 Python 3.9+ standard library only. No pip installs required.
 
+## CI scope
+
+- `.github/workflows/baseline-ci.yml` runs Python compile checks, import smoke checks, CLI `--help` smoke checks, Markdown/relative-link validation, and a conservative secret-pattern scan.
+- CI intentionally does not call Reddit, DC Inside, GitHub, HN, YouTube, SearXNG, X/Twitter, Discord, or RSS endpoints.
+- Live scanner runs remain manual/scheduled operations and should use explicit credentials/environment outside CI.
+
 ## License
 
 Internal use — jinwon-int.
