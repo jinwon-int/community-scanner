@@ -49,8 +49,8 @@ python3 x_fetch.py user elonmusk --limit 10
 
 | Env Var | Purpose | Default |
 |---|---|---|
-| `TWITTER_BEARER_TOKEN` | X API v2 auth | auto-detect from `openclaw.json` |
-| `SEARXNG_BASE_URL` | SearXNG instance | `https://vps4.tail1546e7.ts.net:18443` |
+| `TWITTER_BEARER_TOKEN` | X API v2 auth | unset; provide explicitly for X runs |
+| `SEARXNG_BASE_URL` | SearXNG instance | unset; provide an operator-approved endpoint for live runs |
 | `COMMUNITY_SCANNER_UA` | User-Agent prefix | `community-scanner-*` |
 
 ## Dependencies
@@ -65,4 +65,15 @@ Python 3.9+ standard library only. No pip installs required.
 
 ## License
 
-Internal use — jinwon-int.
+MIT. See [LICENSE](LICENSE).
+
+## Public source visibility boundary
+
+This repository is being prepared for possible public source visibility. A
+public repository setting would be source-only: it would not approve release or
+tag creation, package/image publication, production deploy/restart/reload,
+database mutation, provider or Telegram sends, credential movement, history
+rewrite, or any other live operation.
+
+Runtime credentials and private operational data must stay outside the
+repository. Example configuration must use placeholders only.
