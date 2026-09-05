@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 WORKSPACE = Path(__file__).resolve().parent.parent
-SCRIPTS = WORKSPACE / "scripts"
+SCRIPTS = Path(__file__).resolve().parent
 DEFAULT_SOURCES = ["reddit", "dc", "github", "hn", "youtube", "searxng"]
 ALL_SOURCES = DEFAULT_SOURCES + ["searxng", "discord", "newsfeeds", "x"]
 DESCRIPTION = "Aggregate community sentiment/signals across non-Discord sources by default, with optional Discord support."
@@ -569,23 +569,20 @@ def collect_newsfeeds(query: str, limit: int, feeds: Optional[List[str]] = None,
     if feeds:
         args.extend(["--rss-feeds"] + feeds)
     
-    try:
-        payload = run_json(args, timeout=60)
-        for row in payload.get("items", [])[:limit * 3]:
-            src = row.get("source", "")
-            kind = "tweet" if src == "x.com" else "article"
-            items.append(to_item(
-                "newsfeeds",
-                kind,
-                row.get("title") or "(no title)",
-                row.get("url") or "",
-                published=row.get("published"),
-                summary=row.get("snippet"),
-                extra={"feed": row.get("feed", ""), "raw_source": src},
-            ))
-    except AggregateError as exc:
-        items.append(to_item("newsfeeds", "error", f"newsfeeds error: {exc}", ""))
-    
+    payload = run_json(args, timeout=60)
+    for row in payload.get("items", [])[:limit * 3]:
+        src = row.get("source", "")
+        kind = "tweet" if src == "x.com" else "article"
+        items.append(to_item(
+            "newsfeeds",
+            kind,
+            row.get("title") or "(no title)",
+            row.get("url") or "",
+            published=row.get("published"),
+            summary=row.get("snippet"),
+            extra={"feed": row.get("feed", ""), "raw_source": src},
+        ))
+
     return items
 
 
@@ -632,6 +629,7 @@ def aggregate(args: argparse.Namespace) -> Dict[str, Any]:
     sources = args.sources or DEFAULT_SOURCES
     out: List[Dict[str, Any]] = []
     errors: List[Dict[str, str]] = []
+    successful_sources: List[str] = []
 
     for source in sources:
         try:
@@ -658,6 +656,7 @@ def aggregate(args: argparse.Namespace) -> Dict[str, Any]:
                 out.extend(discord_items)
                 for warning in discord_warnings:
                     errors.append({"source": source, "error": warning})
+            successful_sources.append(source)
         except Exception as exc:
             errors.append({"source": source, "error": str(exc)})
 
@@ -688,6 +687,7 @@ def aggregate(args: argparse.Namespace) -> Dict[str, Any]:
     return {
         "query": args.query,
         "sources": sources,
+        "successful_sources": successful_sources,
         "count": len(out),
         "items": out,
         "buckets": buckets,
@@ -821,7 +821,7 @@ def main() -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(emit_text(payload, output_mode=args.output_mode))
-    return 0
+    return 0 if payload["successful_sources"] else 1
 
 
 if __name__ == "__main__":

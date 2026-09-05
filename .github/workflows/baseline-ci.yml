@@ -21,6 +21,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Offline aggregate CLI regression tests
+        run: python -m unittest discover -s tests -v
+
       - name: Compile Python sources
         run: python -m compileall -q .
 

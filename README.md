@@ -77,3 +77,9 @@ rewrite, or any other live operation.
 
 Runtime credentials and private operational data must stay outside the
 repository. Example configuration must use placeholders only.
+
+### Aggregate CLI result status
+
+Collectors are resolved beside `community_aggregate.py`, both in a fresh clone and in the existing `workspace/scripts` layout. JSON includes `successful_sources` and per-source `errors`. The CLI exits 1 when every requested source raises a collection error, while still printing the result and diagnostics. A successful empty result, filtered-out results, or partial source failure exits 0. Collector warnings remain in `errors` and do not by themselves fail a successful call.
+
+Offline regression checks: `python3 -m unittest discover -s tests -v`. Fixtures run sibling collectors in temporary directories.
