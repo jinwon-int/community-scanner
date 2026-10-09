@@ -77,6 +77,16 @@ def _ssl_context():
     return ctx
 
 
+def _is_x_host(url: str) -> bool:
+    """True when the URL's host is x.com (or a subdomain), not merely contains it.
+
+    A substring test also matched hosts like ``evil.com/?x.com`` or ``notx.com``
+    (CodeQL py/incomplete-url-substring-sanitization, community-scanner#8).
+    """
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return host == "x.com" or host.endswith(".x.com")
+
+
 def _searxng_search(query: str, categories: str = "news", time_range: str = "day", limit: int = 10) -> List[Dict[str, Any]]:
     """Search via SearXNG with news category + time filter."""
     params = {
@@ -100,7 +110,7 @@ def _searxng_search(query: str, categories: str = "news", time_range: str = "day
             "title": r.get("title", ""),
             "url": r.get("url", ""),
             "published": r.get("publishedDate", ""),
-            "source": "x.com" if "x.com" in (r.get("url") or "") else "searxng",
+            "source": "x.com" if _is_x_host(r.get("url") or "") else "searxng",
             "snippet": re.sub(r"<[^>]+>", "", r.get("content", "") or "")[:300],
             "engines": r.get("engines", []),
         })
