@@ -15,17 +15,6 @@ import news_feeds  # noqa: E402
 import reddit_fetch  # noqa: E402
 
 
-def _old_dc_text(raw: str) -> str:
-    """The pre-#8 regex pipeline, kept here only to pin output equivalence."""
-    raw = re.sub(r'<script[^>]*>.*?</script>', '', raw, flags=re.DOTALL)
-    raw = re.sub(r'<br\s*/?\s*>', '\n', raw)
-    raw = re.sub(r'</p>', '\n', raw)
-    text = re.sub(r'<[^>]+>', '', raw)
-    text = text.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&amp;", "&").replace("&quot;", '"')
-    return re.sub(r'\n{3,}', '\n\n', text).strip()
-
-
 def _new_dc_text(raw: str) -> str:
     return re.sub(r'\n{3,}', '\n\n', dc_fetch._html_fragment_to_text(raw)).strip()
 
@@ -54,18 +43,27 @@ class RedditPermalinkTest(unittest.TestCase):
 
 
 class DcFragmentTextTest(unittest.TestCase):
-    ORDINARY = [
-        '<p>첫 줄</p><p>둘째 &amp; 셋째</p>',
-        '안녕<br>하세요<br/>반갑<br />습니다',
-        '<div><span>A&nbsp;B</span> &lt;tag&gt; &quot;q&quot;</div>',
-        '<p>본문</p><script>var a = "<b>x</b>";</script><p>끝</p>',
-        '<p>a</p>\n\n\n\n<p>b</p>',
-        '<img src="x.png"><a href="/l">링크</a> 텍스트',
+    # Outputs captured from the pre-#8 implementation (origin/main dc_fetch.py,
+    # _extract_post_content) — ordinary fragments must not change.
+    PINNED = [
+        ('<p>첫 줄</p><p>둘째 &amp; 셋째</p>',
+         '첫 줄\n둘째 & 셋째'),
+        ('안녕<br>하세요<br/>반갑<br />습니다',
+         '안녕\n하세요\n반갑\n습니다'),
+        ('<div><span>A&nbsp;B</span> &lt;tag&gt; &quot;q&quot;</div>',
+         'A B <tag> "q"'),
+        ('<p>본문</p><script>var a = "<b>x</b>";</script><p>끝</p>',
+         '본문\n끝'),
+        ('<p>a</p>\n\n\n\n<p>b</p>',
+         'a\n\nb'),
+        ('<img src="x.png"><a href="/l">링크</a> 텍스트',
+         '링크 텍스트'),
     ]
 
-    def test_ordinary_fragments_match_previous_output(self):
-        for raw in self.ORDINARY:
-            self.assertEqual(_new_dc_text(raw), _old_dc_text(raw), raw)
+    def test_ordinary_fragments_keep_previous_output(self):
+        for raw, expected in self.PINNED:
+            html = '<div class="thum-txtin">' + raw + '</div></div>'
+            self.assertEqual(dc_fetch._extract_post_content(html)['content'], expected, raw)
 
     def test_script_variants_the_regex_missed_are_dropped(self):
         for raw in ('<p>ok</p><script>alert(1)</script >',
