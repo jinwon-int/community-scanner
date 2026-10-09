@@ -80,6 +80,51 @@ def request_text(url: str, timeout: int = DEFAULT_TIMEOUT, retries: int = DEFAUL
 
 
 # ---------------------------------------------------------------------------
+class _FragmentText(HTMLParser):
+    """Collect visible text from an HTML fragment.
+
+    Uses the stdlib tokenizer instead of regex tag stripping: a regex such as
+    ``<script[^>]*>.*?</script>`` misses ``</script >``, upper case and
+    unterminated scripts (CodeQL py/bad-tag-filter, community-scanner#8).
+    ``<br>`` and ``</p>`` become newlines; script/style bodies are dropped;
+    entities are decoded by the parser.
+    """
+
+    _SKIP = {"script", "style"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: List[str] = []
+        self._skip = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._SKIP:
+            self._skip += 1
+        elif tag == "br" and not self._skip:
+            self.parts.append("\n")
+
+    def handle_startendtag(self, tag, attrs):
+        if tag == "br" and not self._skip:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self._SKIP:
+            self._skip = max(0, self._skip - 1)
+        elif tag == "p" and not self._skip:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.parts.append(data)
+
+
+def _html_fragment_to_text(fragment: str) -> str:
+    parser = _FragmentText()
+    parser.feed(fragment)
+    parser.close()
+    return "".join(parser.parts).replace("\xa0", " ")
+
+
 # Regex-based extractors (more reliable than HTMLParser for messy DC HTML)
 # ---------------------------------------------------------------------------
 
@@ -217,13 +262,7 @@ def _extract_post_content(html: str) -> Dict[str, Any]:
         if not content_m:
             content_m = re.search(r'<div\s+class="thum-txtin">(.*?)</div>', html, re.DOTALL)
         if content_m:
-            raw = content_m.group(1)
-            raw = re.sub(r'<script[^>]*>.*?</script>', '', raw, flags=re.DOTALL)
-            raw = re.sub(r'<br\s*/?\s*>', '\n', raw)
-            raw = re.sub(r'</p>', '\n', raw)
-            text = re.sub(r'<[^>]+>', '', raw)
-            text = text.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">")
-            text = text.replace("&amp;", "&").replace("&quot;", '"')
+            text = _html_fragment_to_text(content_m.group(1))
             text = re.sub(r'\n{3,}', '\n\n', text).strip()
             result["content"] = text
 

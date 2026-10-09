@@ -28,6 +28,20 @@ class RedditFetchError(RuntimeError):
     pass
 
 
+def _reddit_permalink(link: str) -> str:
+    """Strip ``https://www.reddit.com`` to a site-relative permalink.
+
+    Compare the parsed scheme and host exactly: a prefix test also accepted
+    ``https://www.reddit.com.evil.example/...`` (CodeQL
+    py/incomplete-url-substring-sanitization, community-scanner#8). Any other
+    URL is returned unchanged, as before.
+    """
+    parts = urllib.parse.urlsplit(link)
+    if parts.scheme == "https" and parts.netloc == "www.reddit.com":
+        return urllib.parse.urlunsplit(("", "", parts.path, parts.query, parts.fragment))
+    return link
+
+
 def request(url: str):
     req = urllib.request.Request(
         url,
@@ -230,7 +244,7 @@ def fetch_search(query: str, subreddit: Optional[str], sort: str, limit: int, ti
                 "num_comments": None,
                 "created_utc": None,
                 "created_iso": None,
-                "permalink": link.replace("https://www.reddit.com", "") if link.startswith("https://www.reddit.com") else link,
+                "permalink": _reddit_permalink(link),
                 "url": link,
                 "selftext": "",
                 "selftext_excerpt": entry.get("summary") or "",
