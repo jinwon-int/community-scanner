@@ -34,7 +34,11 @@ SOURCE_BASE_WEIGHTS = {
     "x": 1100,
 }
 
-SEARXNG_BASE_URL = os.environ.get("SEARXNG_BASE_URL", "https://vps4.tail1546e7.ts.net:18443")
+# No built-in endpoint: operators provide one (README). Unset -> the searxng
+# source is skipped with a warning, other sources still run (#10 F3).
+SEARXNG_BASE_URL = (os.environ.get("SEARXNG_BASE_URL") or "").strip().rstrip("/") or None
+# Optional extra CA bundle for a privately signed SearXNG host (#10 F1).
+SEARXNG_CA_FILE = (os.environ.get("SEARXNG_CA_FILE") or "").strip() or None
 DEFAULT_HOT_SUBREDDITS = ["technology", "worldnews", "programming", "singularity"]
 DEFAULT_BUCKET_PREVIEW = 3
 PRESET_CONFIGS = {
@@ -480,8 +484,13 @@ def collect_searxng(query: str, limit: int, categories: Optional[str] = None, ti
     if time_range:
         params["time_range"] = time_range
 
+    if not SEARXNG_BASE_URL:
+        raise AggregateError("SEARXNG_BASE_URL is not set; searxng source skipped")
+
     url = f"{SEARXNG_BASE_URL}/search?{urllib.parse.urlencode(params)}"
     ctx = ssl.create_default_context()
+    if SEARXNG_CA_FILE:
+        ctx.load_verify_locations(cafile=SEARXNG_CA_FILE)
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "community-aggregate/1.0"})
         with urllib.request.urlopen(req, timeout=20, context=ctx) as resp:

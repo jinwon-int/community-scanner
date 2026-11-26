@@ -22,7 +22,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-SEARXNG_BASE_URL = os.environ.get("SEARXNG_BASE_URL", "https://vps4.tail1546e7.ts.net:18443")
+# No built-in endpoint: operators provide one (README). Unset -> SearXNG is skipped (#10 F3).
+SEARXNG_BASE_URL = (os.environ.get("SEARXNG_BASE_URL") or "").strip().rstrip("/") or None
+# Optional extra CA bundle for a privately signed SearXNG/feed host (#10 F1).
+SEARXNG_CA_FILE = (os.environ.get("SEARXNG_CA_FILE") or "").strip() or None
 
 # --- X API v2 Bearer Token ---
 def _load_x_token() -> str:
@@ -70,10 +73,16 @@ X_RSS_ACCOUNTS = {
 }
 
 
-def _ssl_context():
+def _ssl_context(ca_file: Optional[str] = None) -> ssl.SSLContext:
+    """Verifying TLS context: hostname + chain are always checked (#10 F1).
+
+    ``SEARXNG_CA_FILE`` is loaded *in addition to* the system store so a
+    privately signed host works without weakening public RSS hosts.
+    """
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ca_file = ca_file if ca_file is not None else SEARXNG_CA_FILE
+    if ca_file:
+        ctx.load_verify_locations(cafile=ca_file)
     return ctx
 
 
@@ -96,6 +105,8 @@ def _searxng_search(query: str, categories: str = "news", time_range: str = "day
         "time_range": time_range,
         "pageno": 1,
     }
+    if not SEARXNG_BASE_URL:
+        return [{"error": "SEARXNG_BASE_URL is not set; searxng search skipped", "source": "searxng", "query": query}]
     url = f"{SEARXNG_BASE_URL}/search?{urllib.parse.urlencode(params)}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "OpenClaw-NewsBot/1.0"})

@@ -50,7 +50,8 @@ python3 x_fetch.py user elonmusk --limit 10
 | Env Var | Purpose | Default |
 |---|---|---|
 | `TWITTER_BEARER_TOKEN` | X API v2 auth | unset; provide explicitly for X runs |
-| `SEARXNG_BASE_URL` | SearXNG instance | unset; provide an operator-approved endpoint for live runs |
+| `SEARXNG_BASE_URL` | SearXNG instance | unset; provide an operator-approved endpoint for live runs (unset → the `searxng` source is skipped with a warning) |
+| `SEARXNG_CA_FILE` | Extra CA bundle (PEM) for a privately signed SearXNG/feed host; added to the system store, TLS verification stays on | unset |
 | `COMMUNITY_SCANNER_UA` | User-Agent prefix | `community-scanner-*` |
 
 ## Dependencies
