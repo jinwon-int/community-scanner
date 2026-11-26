@@ -4,6 +4,7 @@ import os
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,8 @@ from typing import Any, Dict, List, Optional
 USER_AGENT = os.environ.get("COMMUNITY_SCANNER_UA", "community-scanner-github/0.1")
 BASE = "https://api.github.com"
 DEFAULT_TIMEOUT = 20
+# owner/repo only: one slash, GitHub's name alphabet, no "." / ".." segments.
+REPO_FULL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 class GitHubFetchError(RuntimeError):
@@ -43,6 +46,19 @@ def excerpt(text: Optional[str], limit: int = 220) -> str:
     return clean[: limit - 3].rstrip() + "..."
 
 
+def validate_full_name(full_name: str) -> str:
+    """Reject anything but ``owner/repo`` before it is spliced into an API path.
+
+    Without this an untrusted ``--github-repo`` could steer the authenticated
+    ``gh`` call to an arbitrary endpoint (community-scanner#10 F2).
+    """
+    if not isinstance(full_name, str) or not REPO_FULL_NAME_RE.fullmatch(full_name):
+        raise GitHubFetchError(f"invalid repository name (expected owner/repo): {full_name!r}")
+    if any(part in (".", "..") for part in full_name.split("/")):
+        raise GitHubFetchError(f"invalid repository name (expected owner/repo): {full_name!r}")
+    return full_name
+
+
 def gh_available() -> bool:
     return shutil.which("gh") is not None
 
@@ -50,7 +66,10 @@ def gh_available() -> bool:
 def gh_api(path: str, params: Optional[Dict[str, Any]] = None, *, jq: Optional[str] = None) -> Any:
     if not gh_available():
         raise GitHubFetchError("gh CLI is not installed")
-    cmd = ["gh", "api", path]
+    # Always GET: `gh api` switches to POST as soon as -f parameters are added,
+    # which would hit create endpoints with the operator token (#10 F2).
+    # With --method GET the -f parameters are sent as the query string.
+    cmd = ["gh", "api", "--method", "GET", path]
     for key, value in (params or {}).items():
         if value is None:
             continue
@@ -160,6 +179,7 @@ def normalize_release(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def fetch_repo(full_name: str) -> Dict[str, Any]:
+    validate_full_name(full_name)
     payload = api(f"/repos/{full_name}")
     return {
         "mode": "repo",
@@ -169,6 +189,7 @@ def fetch_repo(full_name: str) -> Dict[str, Any]:
 
 
 def fetch_repo_issues(full_name: str, state: str, limit: int) -> Dict[str, Any]:
+    validate_full_name(full_name)
     payload = api(f"/repos/{full_name}/issues", {"state": state, "per_page": limit})
     items = [normalize_issue(item) for item in payload]
     return {
@@ -182,6 +203,7 @@ def fetch_repo_issues(full_name: str, state: str, limit: int) -> Dict[str, Any]:
 
 
 def fetch_repo_prs(full_name: str, state: str, limit: int) -> Dict[str, Any]:
+    validate_full_name(full_name)
     payload = api(f"/repos/{full_name}/pulls", {"state": state, "per_page": limit})
     items = []
     for item in payload:
@@ -210,6 +232,7 @@ def fetch_repo_prs(full_name: str, state: str, limit: int) -> Dict[str, Any]:
 
 
 def fetch_releases(full_name: str, limit: int) -> Dict[str, Any]:
+    validate_full_name(full_name)
     payload = api(f"/repos/{full_name}/releases", {"per_page": limit})
     items = [normalize_release(item) for item in payload]
     return {
