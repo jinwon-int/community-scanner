@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import sys
 import urllib.error
@@ -21,11 +22,32 @@ class DiscordFetchError(RuntimeError):
     pass
 
 
+# Upper bound for one HTTP response body; larger bodies fail instead of being
+# buffered without limit (community-scanner#10 F5).
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+def _read_capped(resp, limit: int = MAX_RESPONSE_BYTES) -> bytes:
+    data = resp.read(limit + 1)
+    if len(data) > limit:
+        raise DiscordFetchError(f"response body exceeds {limit} bytes")
+    return data
+
+
+# Text mode only: C0/C1 controls (newline, CR, ESC, ...) in scraped fields could
+# forge extra rows or ANSI sequences. JSON output is unaffected (#10 F4).
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _clean_line(value) -> str:
+    return _CONTROL_CHARS_RE.sub(" ", str(value))
+
+
 def get_token(explicit: Optional[str]) -> str:
     token = explicit or os.environ.get(TOKEN_ENV) or ""
     token = token.strip()
     if not token:
-        raise DiscordFetchError(f"Missing Discord bot token. Pass --token or set {TOKEN_ENV}.")
+        raise DiscordFetchError(f"Missing Discord bot token. Set {TOKEN_ENV}.")
     return token
 
 
@@ -44,7 +66,7 @@ def request_json(path: str, token: str, params: Optional[Dict[str, Any]] = None)
     )
     try:
         with urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT) as resp:
-            return json.load(resp)
+            return json.loads(_read_capped(resp))
     except urllib.error.HTTPError as exc:
         detail = exc.reason
         try:
@@ -141,7 +163,7 @@ def render_channel(item: Dict[str, Any]) -> str:
     lines = [f"- #{item.get('name')} | id {item.get('id')} | type {item.get('type')} | pos {item.get('position')}"]
     if item.get("topic"):
         lines.append(f"  topic: {item.get('topic')}")
-    return "\n".join(lines)
+    return "\n".join(_clean_line(line) for line in lines)
 
 
 def render_message(item: Dict[str, Any]) -> str:
@@ -151,7 +173,7 @@ def render_message(item: Dict[str, Any]) -> str:
     ]
     if item.get("content_excerpt"):
         lines.append(f"  text: {item.get('content_excerpt')}")
-    return "\n".join(lines)
+    return "\n".join(_clean_line(line) for line in lines)
 
 
 def emit_text(payload: Dict[str, Any]) -> str:
@@ -172,9 +194,11 @@ def add_format_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Fetch Discord channels or recent messages with a bot token.")
+    parser = argparse.ArgumentParser(description=f"Fetch Discord channels or recent messages with a bot token from ${TOKEN_ENV}.")
     parser.add_argument("--format", choices=("json", "text"), default="json")
-    parser.add_argument("--token", help=f"Discord bot token. Defaults to ${TOKEN_ENV}.")
+    # Kept only to fail loudly: a token on the command line leaks via `ps` and
+    # shell history, so it is read from the environment only (#10 F6).
+    parser.add_argument("--token", help=argparse.SUPPRESS)
     parser.add_argument("--allow-missing-token", action="store_true", help="Return an empty payload with a warning instead of failing when the bot token is missing.")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -195,7 +219,10 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
-        token = get_token(args.token)
+        if args.token is not None:
+            print(f"ERROR: --token is not accepted (visible in ps/history); set {TOKEN_ENV} instead", file=sys.stderr)
+            return 2
+        token = get_token(None)
         if args.command == "channels":
             payload = fetch_guild_channels(args.guild_id, token)
         elif args.command == "messages":

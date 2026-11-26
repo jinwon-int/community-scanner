@@ -85,6 +85,27 @@ class AggregateError(RuntimeError):
     pass
 
 
+# Upper bound for one HTTP response body; larger bodies fail instead of being
+# buffered without limit (community-scanner#10 F5).
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+def _read_capped(resp, limit: int = MAX_RESPONSE_BYTES) -> bytes:
+    data = resp.read(limit + 1)
+    if len(data) > limit:
+        raise AggregateError(f"response body exceeds {limit} bytes")
+    return data
+
+
+# Text mode only: C0/C1 controls (newline, CR, ESC, ...) in scraped fields could
+# forge extra rows or ANSI sequences. JSON output is unaffected (#10 F4).
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _clean_line(value) -> str:
+    return _CONTROL_CHARS_RE.sub(" ", str(value))
+
+
 def run_json(args: List[str], timeout: int = DEFAULT_TIMEOUT) -> Any:
     proc = subprocess.run(args, cwd=WORKSPACE, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
@@ -123,6 +144,15 @@ def as_int(value: Any) -> Optional[int]:
     return None
 
 
+def safe_url(url: Optional[str]) -> str:
+    """Keep only http(s) links; javascript:, data:, file: ... become "" (#10 F7)."""
+    if not url:
+        return ""
+    text = str(url).strip()
+    scheme = text.split(":", 1)[0].lower() if ":" in text else ""
+    return text if scheme in ("http", "https") else ""
+
+
 def to_item(source: str, kind: str, title: str, url: str, *, author: Optional[str] = None, published: Optional[str] = None,
             summary: Optional[str] = None, score: Optional[int] = None, comments: Optional[int] = None,
             extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -130,7 +160,7 @@ def to_item(source: str, kind: str, title: str, url: str, *, author: Optional[st
         "source": source,
         "kind": kind,
         "title": title,
-        "url": url,
+        "url": safe_url(url),
         "author": author,
         "published": published,
         "summary": excerpt(summary),
@@ -494,7 +524,7 @@ def collect_searxng(query: str, limit: int, categories: Optional[str] = None, ti
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "community-aggregate/1.0"})
         with urllib.request.urlopen(req, timeout=20, context=ctx) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(_read_capped(resp))
     except Exception as exc:
         raise AggregateError(f"SearXNG fetch failed: {exc}")
 
@@ -768,7 +798,7 @@ def emit_text(payload: Dict[str, Any], output_mode: str = "default") -> str:
             _append_item_text(lines, item, include_summary=(output_mode != "brief"))
     if not payload.get("items"):
         lines.append("(no items)")
-    return "\n".join(lines).rstrip()
+    return "\n".join(_clean_line(line) for line in lines).rstrip()
 
 
 def build_parser() -> argparse.ArgumentParser:
