@@ -26,6 +26,27 @@ class GitHubFetchError(RuntimeError):
     pass
 
 
+# Upper bound for one HTTP response body; larger bodies fail instead of being
+# buffered without limit (community-scanner#10 F5).
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+def _read_capped(resp, limit: int = MAX_RESPONSE_BYTES) -> bytes:
+    data = resp.read(limit + 1)
+    if len(data) > limit:
+        raise GitHubFetchError(f"response body exceeds {limit} bytes")
+    return data
+
+
+# Text mode only: C0/C1 controls (newline, CR, ESC, ...) in scraped fields could
+# forge extra rows or ANSI sequences. JSON output is unaffected (#10 F4).
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _clean_line(value) -> str:
+    return _CONTROL_CHARS_RE.sub(" ", str(value))
+
+
 def utc_iso(ts: Optional[str]) -> Optional[str]:
     if not ts:
         return None
@@ -100,7 +121,7 @@ def http_api(path: str, params: Optional[Dict[str, Any]] = None) -> Any:
     )
     try:
         with urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT) as resp:
-            return json.load(resp)
+            return json.loads(_read_capped(resp))
     except urllib.error.HTTPError as exc:
         detail = exc.reason
         try:
@@ -282,7 +303,7 @@ def render_repo(repo: Dict[str, Any]) -> str:
         lines.append(f"  desc: {repo.get('description')}")
     if repo.get("topics"):
         lines.append(f"  topics: {', '.join(repo.get('topics')[:8])}")
-    return "\n".join(lines)
+    return "\n".join(_clean_line(line) for line in lines)
 
 
 def render_issue(item: Dict[str, Any]) -> str:
@@ -296,7 +317,7 @@ def render_issue(item: Dict[str, Any]) -> str:
         lines.append(f"  labels: {', '.join(item.get('labels'))}")
     if item.get("body_excerpt"):
         lines.append(f"  text: {item.get('body_excerpt')}")
-    return "\n".join(lines)
+    return "\n".join(_clean_line(line) for line in lines)
 
 
 def render_release(item: Dict[str, Any]) -> str:
@@ -307,7 +328,7 @@ def render_release(item: Dict[str, Any]) -> str:
     ]
     if item.get("body_excerpt"):
         lines.append(f"  notes: {item.get('body_excerpt')}")
-    return "\n".join(lines)
+    return "\n".join(_clean_line(line) for line in lines)
 
 
 def emit_text(payload: Dict[str, Any]) -> str:

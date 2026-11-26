@@ -22,6 +22,27 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Upper bound for one HTTP response body; larger bodies fail instead of being
+# buffered without limit (community-scanner#10 F5).
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+def _read_capped(resp, limit: int = MAX_RESPONSE_BYTES) -> bytes:
+    data = resp.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"response body exceeds {limit} bytes")
+    return data
+
+
+# Text mode only: C0/C1 controls (newline, CR, ESC, ...) in scraped fields could
+# forge extra rows or ANSI sequences. JSON output is unaffected (#10 F4).
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _clean_line(value) -> str:
+    return _CONTROL_CHARS_RE.sub(" ", str(value))
+
+
 # No built-in endpoint: operators provide one (README). Unset -> SearXNG is skipped (#10 F3).
 SEARXNG_BASE_URL = (os.environ.get("SEARXNG_BASE_URL") or "").strip().rstrip("/") or None
 # Optional extra CA bundle for a privately signed SearXNG/feed host (#10 F1).
@@ -111,7 +132,7 @@ def _searxng_search(query: str, categories: str = "news", time_range: str = "day
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "OpenClaw-NewsBot/1.0"})
         with urllib.request.urlopen(req, context=_ssl_context(), timeout=15) as resp:
-            data = json.loads(resp.read().decode())
+            data = json.loads(_read_capped(resp).decode())
     except Exception as e:
         return [{"error": str(e), "source": "searxng", "query": query}]
     
@@ -134,7 +155,7 @@ def _fetch_rss(url: str, timeout: int = 15) -> List[Dict[str, Any]]:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "OpenClaw-NewsBot/1.0"})
         with urllib.request.urlopen(req, context=_ssl_context(), timeout=timeout) as resp:
-            raw = resp.read()
+            raw = _read_capped(resp)
     except Exception as e:
         return [{"error": str(e), "source": "rss", "url": url}]
     
@@ -278,7 +299,7 @@ def _x_api_timeline(username: str, limit: int = 10) -> List[Dict[str, Any]]:
             headers={"Authorization": f"Bearer {X_BEARER_TOKEN}"}
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
-            user_data = json.loads(resp.read())
+            user_data = json.loads(_read_capped(resp))
         user_id = user_data.get("data", {}).get("id", "")
         user_name = user_data.get("data", {}).get("name", username)
         if not user_id:
@@ -297,7 +318,7 @@ def _x_api_timeline(username: str, limit: int = 10) -> List[Dict[str, Any]]:
     try:
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {X_BEARER_TOKEN}"})
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(_read_capped(resp))
     except Exception as e:
         return [{"error": f"API failed for {username}: {e}"}]
     
@@ -334,7 +355,7 @@ def _x_api_search(query: str, limit: int = 10) -> List[Dict[str, Any]]:
     try:
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {X_BEARER_TOKEN}"})
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(_read_capped(resp))
     except Exception as e:
         return [{"error": f"X search failed: {e}"}]
     
@@ -428,10 +449,10 @@ def main() -> int:
     
     if args.format == "text":
         for item in output["items"]:
-            print(f"[{item.get('source', '?')}/{item.get('feed', 'x')}] {item.get('title', '(no title)')[:120]}")
+            print(_clean_line(f"[{item.get('source', '?')}/{item.get('feed', 'x')}] {item.get('title', '(no title)')[:120]}"))
             if item.get("snippet"):
-                print(f"  {item['snippet'][:150]}")
-            print(f"  {item.get('url', '')}")
+                print(_clean_line(f"  {item['snippet'][:150]}"))
+            print(_clean_line(f"  {item.get('url', '')}"))
             print()
     else:
         print(json.dumps(output, ensure_ascii=False, indent=2))

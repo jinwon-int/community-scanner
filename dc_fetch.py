@@ -43,6 +43,27 @@ class DCFetchError(RuntimeError):
     pass
 
 
+# Upper bound for one HTTP response body; larger bodies fail instead of being
+# buffered without limit (community-scanner#10 F5).
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+def _read_capped(resp, limit: int = MAX_RESPONSE_BYTES) -> bytes:
+    data = resp.read(limit + 1)
+    if len(data) > limit:
+        raise DCFetchError(f"response body exceeds {limit} bytes")
+    return data
+
+
+# Text mode only: C0/C1 controls (newline, CR, ESC, ...) in scraped fields could
+# forge extra rows or ANSI sequences. JSON output is unaffected (#10 F4).
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _clean_line(value) -> str:
+    return _CONTROL_CHARS_RE.sub(" ", str(value))
+
+
 def request_text(url: str, timeout: int = DEFAULT_TIMEOUT, retries: int = DEFAULT_RETRIES) -> str:
     req = urllib.request.Request(
         url,
@@ -56,7 +77,7 @@ def request_text(url: str, timeout: int = DEFAULT_TIMEOUT, retries: int = DEFAUL
     for attempt in range(1, retries + 1):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read().decode("utf-8", "replace")
+                return _read_capped(resp).decode("utf-8", "replace")
         except urllib.error.HTTPError as exc:
             detail = exc.reason
             try:
@@ -608,7 +629,7 @@ def format_posts_text(data: Dict[str, Any]) -> str:
         if url:
             lines.append(f"    {url}")
         lines.append("")
-    return "\n".join(lines)
+    return "\n".join(_clean_line(line) for line in lines)
 
 
 def format_post_text(data: Dict[str, Any]) -> str:
@@ -633,7 +654,7 @@ def format_post_text(data: Dict[str, Any]) -> str:
             nick = c.get("writer", "?")
             text = c.get("text", "")
             lines.append(f"  {nick}: {text}")
-    return "\n".join(lines)
+    return "\n".join(_clean_line(line) for line in lines)
 
 
 # ---------------------------------------------------------------------------

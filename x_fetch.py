@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import sys
 import urllib.request
@@ -17,6 +18,27 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Upper bound for one HTTP response body; larger bodies fail instead of being
+# buffered without limit (community-scanner#10 F5).
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+def _read_capped(resp, limit: int = MAX_RESPONSE_BYTES) -> bytes:
+    data = resp.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"response body exceeds {limit} bytes")
+    return data
+
+
+# Text mode only: C0/C1 controls (newline, CR, ESC, ...) in scraped fields could
+# forge extra rows or ANSI sequences. JSON output is unaffected (#10 F4).
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _clean_line(value) -> str:
+    return _CONTROL_CHARS_RE.sub(" ", str(value))
+
 
 # Resolve token from config env or OS env
 def _load_token() -> str:
@@ -65,7 +87,7 @@ def _api(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read())
+            return json.loads(_read_capped(resp))
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")
         return {"error": f"HTTP {e.code}", "detail": body[:500]}
@@ -290,11 +312,11 @@ def main() -> int:
     if args.format == "text":
         for item in result:
             if "error" in item:
-                print(f"[ERROR] {item['error']}")
+                print(_clean_line(f"[ERROR] {item['error']}"))
                 continue
-            print(f"[{item.get('username', '?')}] {item.get('text', '')[:200]}")
-            print(f"  ♥{item.get('likes',0)} 🫩{item.get('retweets',0)} | {item.get('created_at','')}")
-            print(f"  {item.get('url','')}")
+            print(_clean_line(f"[{item.get('username', '?')}] {item.get('text', '')[:200]}"))
+            print(_clean_line(f"  ♥{item.get('likes',0)} 🫩{item.get('retweets',0)} | {item.get('created_at','')}"))
+            print(_clean_line(f"  {item.get('url','')}"))
             print()
     else:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
